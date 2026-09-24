@@ -1,0 +1,32 @@
+base-config:
+  company: Xiaomi
+  open_source: true
+  documentation_url: https://platform.xiaomimimo.com/#/docs/
+  supports:
+    images: false
+    files: false
+    tools: true
+  properties:
+    training_cutoff: December 2024
+    reasoning_model: false
+
+mimo-models:
+  base-config:
+    properties:
+      context_window: 256000
+    supports:
+      temperature: true
+    default_parameters:
+      temperature: 0.3
+      top_p: 0.95
+
+  xiaomi/mimo-v2-flash:
+    label: MiMo V2 Flash
+    release_date: 2025-12-17
+    properties:
+      max_tokens: 64000
+    costs_per_million_token:
+      input: 0.10
+      output: 0.30
+      cache:
+        read: 0.01

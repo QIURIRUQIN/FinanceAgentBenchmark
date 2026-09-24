@@ -1,0 +1,279 @@
+base-config:
+  company: xAI
+  documentation_url: https://docs.x.ai/docs#models
+  open_source: false
+  supports:
+    images: true
+    files: false
+    tools: true
+  properties:
+    reasoning_model: false
+
+grok-4.3-models:
+  base-config:
+    supports:
+      temperature: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 0.7
+      top_p: 0.95
+
+  grok/grok-4.3:
+    label: Grok 4.3
+    release_date: 2026-04-30
+    documentation_url: ""
+    supports:
+      images: true
+      files: true
+    properties:
+      context_window: 1_000_000
+      max_tokens: 1_000_000
+      training_cutoff: null
+      reasoning_model: true
+    default_parameters:
+      max_tokens: null
+    costs_per_million_token:
+      input: 1.25
+      output: 2.50
+      cache:
+        read: 0.20
+      context:
+        threshold: 200_000
+        input: 2.50
+        output: 5.00
+        cache:
+          read: 0.40
+
+grok-4.20-models:
+  base-config:
+    supports:
+      temperature: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 0.7
+      top_p: 0.95
+
+  grok/grok-4.20-0309-reasoning:
+    label: Grok 4.20 (Reasoning)
+    release_date: 2026-03-09
+    documentation_url: ""
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 2.00
+      output: 6.00
+      cache:
+        read: 0.20
+      context:
+        threshold: 200_000
+        input: 4.00
+        output: 12.00
+        cache:
+          read: 0.40
+
+  grok/grok-4.20-multi-agent-0309:
+    label: Grok 4.20 (Multi-Agent)
+    release_date: 2026-03-09
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000
+      training_cutoff: null
+      reasoning_model: true
+    supports:
+        files: true
+    costs_per_million_token:
+      input: 2.00
+      output: 6.00
+      cache:
+        read: 0.20
+      context:
+        threshold: 200_000
+        input: 4.00
+        output: 12.00
+        cache:
+          read: 0.40
+grok-4-models:
+  base-config:
+    supports:
+      temperature: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 0.7
+      top_p: 0.95
+
+  grok/grok-4-0709:
+    label: Grok 4
+    release_date: 2025-07-09
+    documentation_url: https://docs.x.ai/docs/models/grok-4-0709
+    supports:
+      files: true
+    properties:
+      context_window: 256_000
+      max_tokens: 128_000
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 3.00
+      output: 15.00
+      cache:
+        read: 0.75
+      context:
+        threshold: 128_000
+        input: 6.00
+        output: 30.00
+    alternative_keys:
+      - grok/grok-4
+      - grok/grok-4-latest
+
+  grok/grok-4-fast-reasoning:
+    label: Grok 4 Fast (Reasoning)
+    release_date: 2025-09-19
+    documentation_url: https://docs.x.ai/docs/models/grok-4-fast-reasoning
+    supports:
+      files: true
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.20
+      output: 0.5
+      cache:
+        read: 0.05
+      context:
+        threshold: 128_000
+        input: 0.4
+        output: 1.0
+    alternative_keys:
+      - grok/grok-4-fast
+      - grok/grok-4-fast-reasoning-latest
+
+  grok/grok-4-1-fast-reasoning:
+    label: Grok 4.1 Fast (Reasoning)
+    release_date: 2025-11-19
+    documentation_url: ""
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000 # from openrouter
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.20
+      output: 0.5
+      cache:
+        read: 0.05
+      context:
+        threshold: 128_000
+        input: 0.4
+        output: 1.0
+
+  grok/grok-4-1-fast-non-reasoning:
+    label: Grok 4.1 Fast Non-Reasoning
+    release_date: 2025-11-19
+    documentation_url: ""
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000 # from openrouter
+      training_cutoff: null
+    costs_per_million_token:
+      input: 0.20
+      output: 0.5
+      cache:
+        read: 0.05
+      context:
+        threshold: 128_000
+        input: 0.4
+        output: 1.0
+
+  grok/grok-4-fast-non-reasoning:
+    label: Grok 4 Fast (Non-Reasoning)
+    release_date: 2025-09-19
+    documentation_url: https://docs.x.ai/docs/models/grok-4-fast-non-reasoning
+    supports:
+      files: true
+    properties:
+      context_window: 2_000_000
+      max_tokens: 2_000_000
+      training_cutoff: null
+    costs_per_million_token:
+      input: 0.20
+      output: 0.5
+      cache:
+        read: 0.05
+      context:
+        threshold: 128_000
+        input: 0.4
+        output: 1.0
+    alternative_keys:
+      - grok/grok-4-fast-non-reasoning-latest
+
+grok-code-models:
+  base-config:
+    supports:
+      temperature: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 0.7
+      top_p: 0.95
+
+  grok/grok-code-fast-1:
+    label: Grok Code Fast
+    release_date: 2025-08-25
+    documentation_url: https://docs.x.ai/docs/models/grok-code-fast-1
+    supports:
+      images: false
+    properties:
+      context_window: 256_000
+      max_tokens: 40_000
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.20
+      output: 1.50
+      cache:
+        read: 0.02
+    alternative_keys:
+      - grok/grok-code-fast
+      - grok/grok-code-fast-1-0825
+
+grok-3-models:
+  base-config:
+    supports:
+      temperature: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 0.7
+      top_p: 0.95
+
+  grok/grok-3:
+    label: Grok 3
+    release_date: 2025-04-09
+    documentation_url: https://docs.x.ai/docs/models/grok-3
+    properties:
+      context_window: 131_072
+      max_tokens: 0
+      training_cutoff: null
+    costs_per_million_token:
+      input: 3.00
+      output: 15.00
+      cache:
+        read: 0.75
+    alternative_keys:
+      - grok/grok-3-latest
+      - grok/grok-3-beta
+      - grok/grok-3-fast
+      - grok/grok-3-fast-latest
+      - grok/grok-3-fast-beta

@@ -1,0 +1,674 @@
+base-config:
+  company: OpenAI
+  open_source: false
+  supports:
+    images: false
+    files: false
+    tools: true
+    batch: true
+    temperature: true
+    output_schema: true
+  properties:
+    reasoning_model: false
+  costs_per_million_token:
+    batch:
+      input_discount: 0.5
+      output_discount: 0.5
+  default_parameters:
+    reasoning_effort: "high"
+gpt-5-models:
+  base-config:
+    documentation_url: ""
+    supports:
+      images: true
+      files: true
+      temperature: false
+    metadata:
+      available_for_everyone: false
+    properties:
+      max_tokens: 128_000
+      reasoning_model: true
+
+  openai/gpt-5.5-pro:
+    label: GPT 5.5 Pro
+    release_date: 2026-04-23
+    properties:
+      context_window: 400_000
+    costs_per_million_token: # TODO: get real pricing
+      input: 30
+      output: 180
+      cache:
+        read_discount: 1
+      context:
+        threshold: 272_000
+        input: 60
+        output: 270
+    provider_properties:
+      verbosity: "medium"
+      prompt_cache_retention: "24h"
+    default_parameters:
+      reasoning_effort: "xhigh"
+
+  openai/gpt-5.5:
+    label: GPT 5.5
+    release_date: 2026-04-23
+    properties:
+      context_window: 1_050_000
+    costs_per_million_token: # TODO: get real pricing
+      input: 5
+      output: 30
+      cache:
+        read: 0.5
+      context:
+        threshold: 272_000
+        input: 10
+        output: 45
+        cache:
+          read: 1
+    provider_properties:
+      verbosity: "medium"
+      prompt_cache_retention: "24h"
+    default_parameters:
+      reasoning_effort: "xhigh"
+    alternative_keys:
+      - openai/gpt-5.5-high:
+          default_parameters:
+            reasoning_effort: "high"
+
+  openai/gpt-5.4-nano-2026-03-17:
+    label: GPT 5.4 Nano
+    release_date: 2026-03-17
+    documentation_url: ""
+    properties:
+      context_window: 400_000
+      training_cutoff: "2025-08" # TODO: check this
+    metadata:
+      available_for_everyone: true
+    costs_per_million_token:
+      input: 0.20
+      output: 1.25
+      cache:
+        read: 0.02
+    default_parameters:
+      reasoning_effort: "high"
+
+  openai/gpt-5.4-pro-2026-03-05:
+    label: GPT 5.4 Pro
+    release_date: 2026-03-05
+    documentation_url: "https://developers.openai.com/api/docs/models/gpt-5.4"
+    properties:
+      context_window: 1_050_000
+      training_cutoff: "2025-08"
+    costs_per_million_token:
+      input: 30
+      output: 180
+      context:
+        threshold: 272_000
+        input: 60
+        output: 270
+    default_parameters:
+      reasoning_effort: "xhigh"
+
+  openai/gpt-5.4-mini-2026-03-17:
+    label: GPT 5.4 Mini
+    release_date: 2026-03-17
+    documentation_url: ""
+    properties:
+      context_window: 400_000
+      training_cutoff: "2025-08"
+    metadata:
+      available_for_everyone: true
+    costs_per_million_token:
+      input: 0.75
+      output: 4.5
+      cache:
+        read: 0.075
+    default_parameters:
+      reasoning_effort: "xhigh"
+    alternative_keys:
+      - openai/gpt-5.4-mini
+
+  openai/gpt-5.4-2026-03-05:
+    label: GPT 5.4
+    release_date: 2026-03-05
+    documentation_url: "https://developers.openai.com/api/docs/models/gpt-5.4"
+    properties:
+      context_window: 1_050_000
+      training_cutoff: "2024-09"
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 2.5
+      output: 15
+      cache:
+        read: 0.25
+      context:
+        threshold: 272_000
+        input: 5.0
+        output: 22.5
+        cache:
+          read: 0.5
+    default_parameters:
+      reasoning_effort: "xhigh"
+    alternative_keys:
+      - openai/gpt-5.4-2026-03-05-high:
+          default_parameters:
+            reasoning_effort: "high"
+      - openai/gpt-5.4-2026-03-05-low:
+          default_parameters:
+            reasoning_effort: "low"
+
+  openai/gpt-5.3-codex:
+    label: GPT 5.3 Codex
+    release_date: 2026-02-24
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    default_parameters:
+      reasoning_effort: "xhigh"
+    costs_per_million_token:
+      input: 1.75
+      output: 14
+      cache:
+        read: 0.175
+        read_discount: 1.0
+
+  openai/gpt-5.2-codex:
+    label: GPT 5.2 Codex
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.2-codex
+    release_date: 2025-12-11
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 1.75
+      output: 14
+      cache:
+        read: 0.175
+
+  openai/gpt-5.2-2025-12-11:
+    label: GPT 5.2
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.2
+    release_date: 2025-12-11
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 1.75
+      output: 14
+      cache:
+        read: 0.175
+    default_parameters:
+      reasoning_effort: "xhigh"
+    alternative_keys:
+      - openai/gpt-5.2
+
+  openai/gpt-5.2-pro-2025-12-11:
+    label: GPT 5.2 Pro
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.2-pro
+    release_date: 2025-12-11
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 21
+      output: 168
+    alternative_keys:
+      - openai/gpt-5.2-pro
+
+  openai/gpt-5.1-codex-max:
+    label: GPT 5.1 Codex Max
+    release_date: 2025-12-04
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 1.25
+      output: 10.0
+      cache:
+        read: 0.125
+  openai/gpt-5.1-codex:
+    label: GPT 5.1 Codex
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.1-codex
+    release_date: 2025-11-13
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 1.25
+      output: 10.0
+      cache:
+        read: 0.125
+
+  openai/gpt-5.1-codex-mini:
+    label: GPT 5.1 Codex Mini
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.1-codex-mini
+    release_date: 2025-11-13
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 0.25
+      output: 2.00
+      cache:
+        read: 0.025
+
+  openai/gpt-5-codex:
+    label: GPT 5 Codex
+    documentation_url: https://platform.openai.com/docs/models/gpt-5-codex
+    release_date: 2025-09-23
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 1.25
+      output: 10.0
+      cache:
+        read: 0.125
+
+  openai/gpt-5.1-2025-11-13:
+    label: GPT 5.1
+    documentation_url: https://platform.openai.com/docs/models/gpt-5.1
+    release_date: 2025-11-13
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 1.25
+      output: 10
+      cache:
+        read: 0.125
+
+  openai/gpt-5-2025-08-07:
+    label: GPT 5
+    documentation_url: https://platform.openai.com/docs/models/gpt-5
+    release_date: 2025-08-07
+    costs_per_million_token:
+      input: 1.25
+      output: 10
+      cache:
+        read: 0.125
+    properties:
+      context_window: 400_000
+      training_cutoff: "2025-07"
+    metadata:
+      available_as_evaluator: true
+    alternative_keys:
+      - azure/gpt-5-2025-08-07
+
+  openai/gpt-5-mini-2025-08-07:
+    label: GPT 5 Mini
+    documentation_url: https://platform.openai.com/docs/models/gpt-5-mini
+    release_date: 2025-08-07
+    costs_per_million_token:
+      input: 0.25
+      output: 2
+      cache:
+        read: 0.025
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-05"
+    alternative_keys:
+      - azure/gpt-5-mini-2025-08-07
+
+  openai/gpt-5-nano-2025-08-07:
+    label: GPT 5 Nano
+    documentation_url: https://platform.openai.com/docs/models/gpt-5-nano
+    release_date: 2025-08-07
+    properties:
+      context_window: 400_000
+      training_cutoff: "2024-09"
+    costs_per_million_token:
+      input: 0.05
+      output: 0.4
+      cache:
+        read: 0.005
+    alternative_keys:
+      - azure/gpt-5-nano-2025-08-07
+
+gpt-4.1-models:
+  base-config:
+    documentation_url: https://platform.openai.com/docs/models/gpt-4.1
+    release_date: 2025-04-14
+    supports:
+      images: true
+    properties:
+      context_window: 1_047_576
+      max_tokens: 32_768
+      training_cutoff: "2024-05-31"
+    default_parameters:
+      temperature: 1
+
+  openai/gpt-4.1-2025-04-14:
+    label: GPT 4.1
+    costs_per_million_token:
+      input: 2.0
+      output: 8.0
+      cache:
+        read: 0.5
+    alternative_keys:
+      - azure/gpt-4.1-2025-04-14
+
+  openai/gpt-4.1-mini-2025-04-14:
+    label: GPT 4.1 Mini
+    costs_per_million_token:
+      input: 0.4
+      output: 1.6
+      cache:
+        read: 0.1
+    documentation_url: https://platform.openai.com/docs/models/gpt-4.1-mini
+    alternative_keys:
+      - azure/gpt-4.1-mini-2025-04-14
+
+  openai/gpt-4.1-nano-2025-04-14:
+    label: GPT 4.1 Nano
+    costs_per_million_token:
+      input: 0.1
+      output: 0.4
+      cache:
+        read: 0.025
+    documentation_url: https://platform.openai.com/docs/models/gpt-4.1-nano
+    alternative_keys:
+      - azure/gpt-4.1-nano-2025-04-14
+
+deep-research-models:
+  base-config:
+    documentation_url: https://platform.openai.com/docs/deep-research
+    supports:
+      images: true
+      files: true
+      temperature: false
+      output_schema: false
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2024-05-31"
+      reasoning_model: true
+    provider_properties:
+      deep_research: true
+
+  openai/o3-deep-research-2025-06-26:
+    label: o3 Deep Research
+    release_date: 2025-06-26
+    costs_per_million_token:
+      input: 10
+      output: 40
+      cache:
+        read: 2.5
+    metadata:
+      available_for_everyone: true
+    documentation_url: https://platform.openai.com/docs/models/o3-deep-research
+
+  openai/o3-deep-research:
+    label: o3 Deep Research
+    release_date: 2025-06-26
+    costs_per_million_token:
+      input: 10
+      output: 40
+      cache:
+        read: 2.5
+    metadata:
+      available_for_everyone: true
+    documentation_url: https://platform.openai.com/docs/models/o3-deep-research
+
+  openai/o4-mini-deep-research-2025-06-26:
+    label: o4 Mini Deep Research
+    release_date: 2025-06-26
+    costs_per_million_token:
+      input: 2
+      output: 8
+      cache:
+        read: 0.5
+    metadata:
+      available_for_everyone: true
+    documentation_url: https://platform.openai.com/docs/models/o4-mini-deep-research
+
+  openai/o4-mini-deep-research:
+    label: o4 Mini Deep Research
+    release_date: 2025-06-26
+    costs_per_million_token:
+      input: 2
+      output: 8
+      cache:
+        read: 0.5
+    metadata:
+      available_for_everyone: true
+    documentation_url: https://platform.openai.com/docs/models/o4-mini-deep-research
+
+o-series-models:
+  base-config:
+    supports:
+      tools: true
+    properties:
+      reasoning_model: true
+
+  openai/o4-mini-2025-04-16:
+    label: o4 Mini
+    documentation_url: https://platform.openai.com/docs/models/o4-mini
+    release_date: 2025-04-16
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2024-05-31"
+    supports:
+      images: true
+      temperature: false
+    costs_per_million_token:
+      input: 1.1
+      output: 4.4
+      cache:
+        read: 0.275
+    alternative_keys:
+      - azure/o4-mini-2025-04-16
+
+  openai/o3-2025-04-16:
+    label: o3
+    documentation_url: https://platform.openai.com/docs/models/o3
+    release_date: 2025-04-16
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2024-05-31"
+    supports:
+      images: true
+      temperature: false
+    costs_per_million_token:
+      input: 2
+      output: 8
+      cache:
+        read: 0.5
+    alternative_keys:
+      - azure/o3-2025-04-16
+
+  openai/o3-pro-2025-06-10:
+    label: o3 Pro
+    release_date: 2025-06-10
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2024-05-31"
+    costs_per_million_token:
+      input: 20
+      output: 80
+      cache:
+        read_discount: 1
+    supports:
+      images: true
+      temperature: false
+    metadata:
+      available_for_everyone: false
+    documentation_url: https://platform.openai.com/docs/models/o3-pro
+
+  openai/o3-mini:
+    label: o3 Mini
+    release_date: 2025-01-31
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2023-10"
+    costs_per_million_token:
+      input: 1.1
+      output: 4.4
+      cache:
+        read: 0.55
+    metadata:
+      available_for_everyone: false
+    documentation_url: https://platform.openai.com/docs/models/o3-mini
+
+  openai/o3-mini-2025-01-31:
+    label: o3 Mini
+    release_date: 2025-01-31
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2023-10"
+    costs_per_million_token:
+      input: 1.1
+      output: 4.4
+      cache:
+        read: 0.55
+    supports:
+      temperature: false
+    metadata:
+      available_for_everyone: false
+    documentation_url: https://platform.openai.com/docs/models/o3-mini
+    alternative_keys:
+      - azure/o3-mini-2025-01-31
+
+  openai/o1-2024-12-17:
+    label: o1
+    release_date: 2024-12-17
+    properties:
+      context_window: 200_000
+      max_tokens: 100_000
+      training_cutoff: "2023-10"
+    costs_per_million_token:
+      input: 15.0
+      output: 60.0
+      cache:
+        read: 7.5
+    supports:
+      images: true
+      temperature: false
+    metadata:
+      available_for_everyone: false
+    documentation_url: https://platform.openai.com/docs/models/o1
+    alternative_keys:
+      - openai/o1
+      - azure/o1-2024-12-17
+
+gpt-4o-models:
+  base-config:
+    documentation_url: https://platform.openai.com/docs/models#gpt-4o
+    properties:
+      context_window: 128_000
+      max_tokens: 16_384
+      training_cutoff: "2023-10"
+    default_parameters:
+      temperature: 1
+
+  openai/gpt-4o:
+    label: GPT 4o
+    release_date: 2024-08-06
+    supports:
+      images: true
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 2.5
+      output: 10.0
+      cache:
+        read: 1.25
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o
+
+  openai/gpt-4o-2024-11-20:
+    label: GPT 4o (2024-11-20)
+    release_date: 2024-11-20
+    supports:
+      images: true
+    metadata:
+      available_as_evaluator: true
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 2.5
+      output: 10.0
+      cache:
+        read: 1.25
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o
+    alternative_keys:
+      - azure/gpt-4o-2024-11-20
+
+  openai/gpt-4o-2024-08-06:
+    label: GPT 4o (2024-08-06)
+    release_date: 2024-08-06
+    supports:
+      images: true
+    metadata:
+      available_as_evaluator: true
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 2.5
+      output: 10.0
+      cache:
+        read: 1.25
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o
+
+  openai/gpt-4o-2024-05-13:
+    label: GPT 4o (2024-05-13)
+    release_date: 2024-05-13
+    supports:
+      images: true
+      output_schema: false
+    metadata:
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 5.0
+      output: 15.0
+      cache:
+        read_discount: 1
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o
+
+gpt-4o-mini-models:
+  base-config:
+    documentation_url: https://platform.openai.com/docs/models#gpt-4o-mini
+    properties:
+      context_window: 128_000
+      max_tokens: 16_384
+      training_cutoff: "2023-10"
+    default_parameters:
+      temperature: 1
+
+  openai/gpt-4o-mini:
+    label: GPT 4o Mini
+    release_date: 2024-07-18
+    supports:
+      images: true
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 0.15
+      output: 0.6
+      cache:
+        read: 0.075
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o-mini
+
+  openai/gpt-4o-mini-2024-07-18:
+    label: GPT 4o Mini
+    release_date: 2024-07-18
+    supports:
+      images: true
+    metadata:
+      available_as_evaluator: true
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 0.15
+      output: 0.6
+      cache:
+        read: 0.075
+    documentation_url: https://platform.openai.com/docs/models/gpt-4o-mini
+    alternative_keys:
+      - azure/gpt-4o-mini-2024-07-18

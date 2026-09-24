@@ -1,0 +1,354 @@
+import asyncio
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+
+from model_library.retriers.token import utils
+from model_library.retriers.token.utils import (
+    KEY_PREFIX,
+    AsyncRedisClient,
+)
+
+HOURS_24 = 86400
+
+BENCHMARK_NOTIFY_PROCEED = "go"
+BENCHMARK_NOTIFY_CANCELLED = "cancelled"
+
+HEARTBEAT_INTERVAL = 5
+HEARTBEAT_TTL = 300  # 5 minutes
+BLPOP_POLL_INTERVAL = 15  # must be shorter than redis socket_timeout
+EARLY_RELEASE_GRACE_PERIOD = 1  # seconds to wait after all dispatched before releasing
+
+
+class BenchmarkQueueCancelled(Exception):
+    """Raised when a queued benchmark run is cancelled before acquiring its slot."""
+
+
+async def _blpop_long(
+    keys: list[str], is_cancelled: Callable[[], Awaitable[bool]] | None = None
+) -> list[str] | None:
+    """blpop that polls in short intervals instead of holding one connection open.
+
+    Avoids socket_timeout killing the connection on keepalive-configured Redis clients.
+    The optional cancellation check lets callers exit even if their wake-up sentinel
+    was never pushed.
+    """
+    deadline = time.monotonic() + HOURS_24
+
+    while time.monotonic() < deadline:
+        result = await utils.redis_client.blpop(keys, timeout=BLPOP_POLL_INTERVAL)
+
+        if result is not None:
+            return result
+        if is_cancelled and await is_cancelled():
+            raise BenchmarkQueueCancelled("Cancelled while waiting in benchmark queue")
+
+    return None
+
+
+async def _notify_next(
+    redis_client: AsyncRedisClient, run_queue_key: str, base_key: str
+) -> None:
+    """Notify the next run in queue (if any) to proceed"""
+    next_run = await redis_client.lindex(run_queue_key, 0)
+    if next_run:
+        next_key = f"{base_key}:notify:{next_run}"
+        await redis_client.rpush(next_key, BENCHMARK_NOTIFY_PROCEED)
+        await redis_client.expire(next_key, HOURS_24)
+
+
+@asynccontextmanager
+async def benchmark_queue(
+    model_registry_key: tuple[str, str],
+    run_id: str,
+    logger: logging.Logger,
+    enabled: bool = True,
+    total_requests: int | None = None,
+    early_release: bool = True,
+    is_cancelled: Callable[[], Awaitable[bool]] | None = None,
+):
+    """
+    FIFO queue that serializes benchmark runs for a given model
+
+    When token retry is enabled, only one run should execute at a time per model
+    to avoid competing for the same TPM. This context manager can coordinate
+    across many applications, as long as the redis connection is shared.
+
+    - each run maintains a heartbeat key with a short TTL
+    - a background task
+        - keeps the heartbeat alive
+        - removes queue head if their heartbeat expires
+        - if total_requests is set, releases the slot early once all requests
+          have been dispatched (entered inflight)
+
+    After early release, remaining inflight requests are "stragglers" — detected
+    by TokenRetrier checking that its benchmark run_id is no longer the queue head.
+
+    Args:
+        model_registry_key (tuple[str, str]): model registry key (or a unique model identifier shared across instance of the same model)
+        run_id (str): unique run identifier (or a unique identifier for a benchmark run)
+        total_requests (int | None): total number of requests to dispatch before early release
+    """
+
+    if not enabled:
+        yield
+        return
+
+    key = f"{KEY_PREFIX}:{model_registry_key[0]}:{model_registry_key[1]}:benchmark"
+    run_queue_key = f"{key}:queue"
+    my_notify_key = f"{key}:notify:{run_id}"
+    alive_key = f"{key}:alive:{run_id}"
+
+    heartbeat_task = None
+
+    await utils.validate_redis_client()
+
+    try:
+        # Clear stale notifications from a previous attempt with the same run_id.
+        await utils.redis_client.delete(my_notify_key)
+        if is_cancelled and await is_cancelled():
+            raise BenchmarkQueueCancelled(
+                f"Run {run_id} cancelled before entering benchmark queue"
+            )
+
+        # initialize heartbeat with short TTL
+        await utils.redis_client.set(alive_key, "1", ex=HEARTBEAT_TTL)
+
+        # per-run metadata for debugging
+        run_meta_key = f"{key}:run:{run_id}"
+        await utils.redis_client.hset(
+            run_meta_key,
+            mapping={
+                "total_requests": total_requests or 0,
+                "slot_acquired": 0,
+                "enqueued_at": time.time(),
+            },
+        )
+        await utils.redis_client.expire(run_meta_key, HOURS_24)
+
+        # Idempotent enqueue (handles server restart where run is already in queue)
+        # NOTE: lpos returns the index (0 for first element), so we must check `is None`
+        if await utils.redis_client.lpos(run_queue_key, run_id) is None:
+            await utils.redis_client.rpush(run_queue_key, run_id)
+        await utils.redis_client.expire(run_queue_key, HOURS_24)
+
+        # if first in queue, notify myself to proceed
+        first_run = await utils.redis_client.lindex(run_queue_key, 0)
+        if first_run == run_id:
+            await utils.redis_client.rpush(my_notify_key, BENCHMARK_NOTIFY_PROCEED)
+
+        # signal heartbeat that slot has been acquired
+        slot_acquired = asyncio.Event()
+
+        # per-run dispatched key for early release counting
+        run_dispatched_key = (
+            f"{key}:run:{run_id}:dispatched"
+            if total_requests and early_release
+            else None
+        )
+
+        # start heartbeat (refreshes my alive key + evict dead head + early release)
+        heartbeat_task = asyncio.create_task(
+            _heartbeat(
+                utils.redis_client,
+                alive_key,
+                run_queue_key,
+                key,
+                run_id,
+                logger,
+                dispatched_key=run_dispatched_key,
+                total_requests=total_requests,
+                slot_acquired=slot_acquired,
+                is_cancelled=is_cancelled,
+            )
+        )
+
+        logger.info(f"Benchmark queue: {run_id} waiting for slot ({run_queue_key})")
+
+        # block until notified
+        while True:
+            result = await _blpop_long([my_notify_key], is_cancelled=is_cancelled)
+            if result is None:
+                raise RuntimeError(f"Run {run_id} timed out waiting in benchmark queue")
+
+            notification = result[1]
+            if notification == BENCHMARK_NOTIFY_CANCELLED:
+                raise BenchmarkQueueCancelled(
+                    f"Run {run_id} cancelled while waiting in benchmark queue"
+                )
+
+            if notification != BENCHMARK_NOTIFY_PROCEED:
+                logger.warning(
+                    f"Benchmark queue: ignoring unknown notification {notification!r} for {run_id}"
+                )
+                continue
+
+            head = await utils.redis_client.lindex(run_queue_key, 0)
+            if head != run_id:
+                logger.warning(
+                    f"Benchmark queue: ignoring stale proceed notification for {run_id}; head is {head}"
+                )
+                continue
+
+            if is_cancelled and await is_cancelled():
+                raise BenchmarkQueueCancelled(
+                    f"Run {run_id} cancelled before acquiring benchmark queue slot"
+                )
+
+            # Clear duplicate proceed tokens after the slot is actually acquired.
+            await utils.redis_client.delete(my_notify_key)
+            if is_cancelled and await is_cancelled():
+                raise BenchmarkQueueCancelled(
+                    f"Run {run_id} cancelled before acquiring benchmark queue slot"
+                )
+            break
+
+        logger.info(f"Benchmark queue: {run_id} acquired slot")
+
+        slot_acquired.set()
+        await utils.redis_client.hset(
+            run_meta_key,
+            mapping={
+                "slot_acquired": 1,
+                "slot_acquired_at": time.time(),
+            },
+        )
+
+        yield
+
+    finally:
+        if heartbeat_task:
+            heartbeat_task.cancel()
+
+        async def _cleanup() -> None:
+            # remove ourselves from queue (idempotent if heartbeat already early-released)
+            await utils.redis_client.lrem(run_queue_key, 1, run_id)
+
+            await utils.redis_client.delete(alive_key)
+            # mark completed and keep metadata alive for popped run visibility
+            now = time.time()
+            run_meta = f"{key}:run:{run_id}"
+            fields: dict[str, float] = {"completed_at": now}
+            # set popped_at if not already set by early release in heartbeat
+            if not await utils.redis_client.hexists(run_meta, "popped_at"):
+                fields["popped_at"] = now
+            await utils.redis_client.hset(run_meta, mapping=fields)
+            await utils.redis_client.expire(run_meta, HOURS_24)
+            await utils.redis_client.expire(f"{run_meta}:dispatched", HOURS_24)
+
+            should_notify_next = True
+            if is_cancelled:
+                try:
+                    should_notify_next = not await is_cancelled()
+                except Exception:
+                    logger.warning(
+                        f"Benchmark queue: cancellation check failed during cleanup for {run_id}",
+                        exc_info=True,
+                    )
+            if should_notify_next:
+                await _notify_next(utils.redis_client, run_queue_key, key)
+
+        await asyncio.shield(_cleanup())
+
+        logger.info(f"Benchmark queue: {run_id} released slot")
+
+
+async def _heartbeat(
+    redis_client: AsyncRedisClient,
+    alive_key: str,
+    run_queue_key: str,
+    base_key: str,
+    run_id: str,
+    logger: logging.Logger,
+    dispatched_key: str | None = None,
+    total_requests: int | None = None,
+    slot_acquired: asyncio.Event | None = None,
+    is_cancelled: Callable[[], Awaitable[bool]] | None = None,
+):
+    """
+    - keeps the heartbeat alive
+    - removes queue head if their heartbeat expires
+    - if total_requests is set, releases queue slot when all requests are dispatched
+      (after EARLY_RELEASE_GRACE_PERIOD expires)
+    """
+
+    grace_deadline: float | None = None
+
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        try:
+            # refresh our heartbeat
+            await redis_client.set(alive_key, "1", ex=HEARTBEAT_TTL)
+
+            # early release: all requests dispatched
+            # only check after slot acquired
+            if (
+                dispatched_key
+                and total_requests is not None
+                and slot_acquired
+                and slot_acquired.is_set()
+            ):
+                count = await redis_client.scard(dispatched_key)
+                if count >= total_requests:
+                    if is_cancelled and await is_cancelled():
+                        dispatched_key = None
+                        continue
+
+                    if grace_deadline is None:
+                        grace_deadline = time.monotonic() + EARLY_RELEASE_GRACE_PERIOD
+                        logger.info(
+                            f"Benchmark queue: all {total_requests} dispatched, "
+                            f"grace period {EARLY_RELEASE_GRACE_PERIOD}s for {run_id}"
+                        )
+
+                    if time.monotonic() >= grace_deadline:
+                        if is_cancelled and await is_cancelled():
+                            dispatched_key = None
+                            continue
+
+                        logger.info(
+                            f"Benchmark queue: grace period expired, "
+                            f"early releasing {run_id}"
+                        )
+                        run_meta_key = f"{base_key}:run:{run_id}"
+                        await redis_client.hset(
+                            run_meta_key, mapping={"popped_at": time.time()}
+                        )
+                        await redis_client.lrem(run_queue_key, 1, run_id)
+                        await _notify_next(redis_client, run_queue_key, base_key)
+                        dispatched_key = None  # stop checking
+
+            # self-promote: if we're at head but missed notification (previous
+            # head crashed between lrem and _notify_next), notify ourselves
+            if slot_acquired and not slot_acquired.is_set():
+                head = await redis_client.lindex(run_queue_key, 0)
+                if head == run_id:
+                    notify_key = f"{base_key}:notify:{run_id}"
+                    await redis_client.rpush(notify_key, BENCHMARK_NOTIFY_PROCEED)
+                    await redis_client.expire(notify_key, HOURS_24)
+
+            # check queue head heartbeat
+            head = await redis_client.lindex(run_queue_key, 0)
+            if head and head != run_id:
+                head_alive_key = f"{base_key}:alive:{head}"
+                if not await redis_client.exists(head_alive_key):
+                    async with redis_client.lock(
+                        f"{run_queue_key}:evict", timeout=HEARTBEAT_INTERVAL
+                    ):
+                        # re-check after acquiring lock
+                        head = await redis_client.lindex(run_queue_key, 0)
+                        if (
+                            head
+                            and head != run_id
+                            and not await redis_client.exists(
+                                f"{base_key}:alive:{head}"
+                            )
+                        ):
+                            logger.info(f"Benchmark queue: evicting dead entry {head}")
+                            await redis_client.lrem(run_queue_key, 1, head)
+                            await _notify_next(redis_client, run_queue_key, base_key)
+        except Exception:
+            logger.warning(
+                f"Benchmark queue heartbeat error for {run_id}", exc_info=True
+            )

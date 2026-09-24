@@ -1,0 +1,22 @@
+# Base model configuration for shared information
+base-config:
+  open_source: true
+  documentation_url: https://docs.together.ai/docs/serverless-models
+  supports:
+    images: true
+    files: false
+    tools: false
+  properties:
+    reasoning_model: false
+  costs_per_million_token:
+    cache:
+      read_discount: 1
+    batch:
+      input_discount: 0.5
+      output_discount: 0.5
+
+# Meta Llama Models
+llama-models:
+  base-config:
+    company: Meta
+

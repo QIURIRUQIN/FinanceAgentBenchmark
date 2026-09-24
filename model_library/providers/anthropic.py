@@ -1,0 +1,814 @@
+import datetime
+import io
+import logging
+import time
+from typing import Any, Literal, Sequence, cast
+
+from anthropic import APIConnectionError, AsyncAnthropic, transform_schema
+from anthropic.types.beta.beta_tool_use_block import BetaToolUseBlock
+from anthropic.types.beta.parsed_beta_message import ParsedBetaMessage
+from pydantic import BaseModel, SecretStr
+from typing_extensions import override
+
+from model_library import model_library_settings
+from model_library.base import (
+    LLM,
+    BatchResult,
+    FileBase,
+    FileInput,
+    FileWithBase64,
+    FileWithId,
+    FileWithUrl,
+    FinishReason,
+    FinishReasonInfo,
+    InputItem,
+    LLMBatchMixin,
+    LLMConfig,
+    ProviderConfig,
+    QueryResult,
+    QueryResultCost,
+    QueryResultMetadata,
+    RateLimit,
+    RawInput,
+    RawResponse,
+    SystemInput,
+    TextInput,
+    ToolBody,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
+from model_library.exceptions import (
+    ImmediateRetryException,
+    NoMatchingToolCallError,
+    UnexpectedSystemInputError,
+    handle_empty_response,
+)
+from model_library.model_utils import get_default_budget_tokens
+from model_library.providers.openai import OpenAIModel
+from model_library.register_models import register_provider
+from model_library.utils import (
+    create_anthropic_client_with_defaults,
+)
+
+
+def map_anthropic_finish_reason(
+    stop_reason: str | None,
+) -> FinishReasonInfo:
+    match stop_reason:
+        case "end_turn":
+            reason = FinishReason.STOP
+        case "max_tokens":
+            reason = FinishReason.MAX_TOKENS
+        case "model_context_window_exceeded":
+            reason = FinishReason.CONTEXT_WINDOW_EXCEEDED
+        case "stop_sequence":
+            reason = FinishReason.STOP_SEQUENCE
+        case "tool_use":
+            reason = FinishReason.TOOL_CALLS
+        case "pause_turn":
+            reason = FinishReason.STOP
+        case "refusal":
+            reason = FinishReason.CONTENT_FILTER
+        case _:
+            reason = FinishReason.UNKNOWN
+
+    return FinishReasonInfo(reason=reason, raw=stop_reason)
+
+
+class AnthropicConfig(ProviderConfig):
+    supports_compute_effort: bool = False
+    supports_auto_thinking: bool = False
+
+
+class AnthropicBatchMixin(LLMBatchMixin):
+    """Batch processing support for Anthropic's Message Batches API."""
+
+    COMPLETED_RESULT_TYPES = ["succeeded", "errored", "canceled", "expired"]
+
+    def __init__(self, model: "AnthropicModel"):
+        self._root = model
+
+    @override
+    async def create_batch_query_request(
+        self,
+        custom_id: str,
+        input: Sequence[InputItem],
+        output_schema: dict[str, Any] | type[BaseModel] | None = None,
+        **kwargs: object,
+    ) -> dict[str, Any]:
+        """Create a single batch request in Anthropic's format.
+
+        Format: {"custom_id": str, "params": {...message params...}}
+        """
+        # Build the message body using the parent model's build_body method
+        tools = cast(list[ToolDefinition], kwargs.pop("tools", []))
+        body = await self._root.build_body(
+            input, tools=tools, output_schema=output_schema, **kwargs
+        )
+
+        return {
+            "custom_id": custom_id,
+            "params": body,
+        }
+
+    @override
+    async def batch_query(
+        self,
+        batch_name: str,
+        requests: list[dict[str, Any]],
+    ) -> str:
+        """Submit a batch of requests to Anthropic's Message Batches API.
+
+        Returns the batch ID for status tracking.
+        """
+        client = self._root.get_client()
+
+        # Create the batch using Anthropic's batches API
+        batch = await client.messages.batches.create(
+            requests=cast(Any, requests),  # Type mismatch in SDK, cast to Any
+        )
+
+        self._root.instance_logger.info(
+            f"Created Anthropic batch {batch.id} with {len(requests)} requests"
+        )
+
+        return batch.id
+
+    @override
+    async def get_batch_results(self, batch_id: str) -> list[BatchResult]:
+        """Retrieve results from a completed batch.
+
+        Streams results using the SDK's batches.results() method.
+        """
+        client = self._root.get_client()
+
+        # Get batch status to verify it's completed
+        batch = await client.messages.batches.retrieve(batch_id)
+
+        if batch.processing_status != "ended":
+            raise ValueError(
+                f"Batch {batch_id} is not completed yet. Status: {batch.processing_status}"
+            )
+
+        # Stream results using the SDK's results method
+        batch_results: list[BatchResult] = []
+        async for result_item in await client.messages.batches.results(batch_id):
+            # result_item is a MessageBatchIndividualResponse - convert to dict
+            result_dict = result_item.model_dump()
+            custom_id = cast(str, result_dict["custom_id"])
+            result_type = cast(str, result_dict["result"]["type"])
+
+            if result_type not in self.COMPLETED_RESULT_TYPES:
+                self._root.instance_logger.warning(
+                    f"Unknown result type '{result_type}' for request {custom_id}"
+                )
+                continue
+
+            if result_type == "succeeded":
+                # Extract the message from the successful result
+                message_data = cast(dict[str, Any], result_dict["result"]["message"])
+
+                # Parse the message content to extract text, reasoning, and tool calls
+                text = ""
+                reasoning = ""
+                tool_calls: list[ToolCall] = []
+
+                for content in message_data.get("content", []):
+                    if content.get("type") == "text":
+                        text += content.get("text", "")
+                    elif content.get("type") == "thinking":
+                        reasoning += content.get("thinking", "")
+                    elif content.get("type") == "tool_use":
+                        tool_calls.append(
+                            ToolCall(
+                                id=content["id"],
+                                name=content["name"],
+                                args=content.get("input", {}),
+                            )
+                        )
+
+                # Extract usage information
+                usage = message_data.get("usage", {})
+                metadata = QueryResultMetadata(
+                    in_tokens=usage.get("input_tokens", 0),
+                    out_tokens=usage.get("output_tokens", 0),
+                    cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+                    cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+                )
+
+                query_result = QueryResult(
+                    output_text=text,
+                    reasoning=reasoning,
+                    metadata=metadata,
+                    tool_calls=tool_calls,
+                    history=[],  # History not available in batch results
+                )
+
+                batch_results.append(
+                    BatchResult(
+                        custom_id=custom_id,
+                        output=query_result,
+                    )
+                )
+
+            elif result_type == "errored":
+                # Handle errored results
+                error = cast(dict[str, Any], result_dict["result"]["error"])
+                error_message = f"{error.get('type', 'unknown_error')}: {error.get('message', 'Unknown error')}"
+                output = QueryResult(output_text=error_message)
+                batch_results.append(
+                    BatchResult(
+                        custom_id=custom_id,
+                        output=output,
+                        error_message=error_message,
+                    )
+                )
+
+            elif result_type in ["canceled", "expired"]:
+                # Handle canceled/expired results
+                error_message = f"Request {result_type}"
+                batch_results.append(
+                    BatchResult(
+                        custom_id=custom_id,
+                        output=QueryResult(output_text=""),
+                        error_message=error_message,
+                    )
+                )
+
+        return batch_results
+
+    @override
+    async def get_batch_progress(self, batch_id: str) -> int:
+        """Get the number of completed requests in a batch."""
+        client = self._root.get_client()
+        batch = await client.messages.batches.retrieve(batch_id)
+
+        # Return the number of processed requests
+        request_counts = batch.request_counts
+        return (
+            request_counts.succeeded
+            + request_counts.errored
+            + request_counts.canceled
+            + request_counts.expired
+        )
+
+    @override
+    async def cancel_batch_request(self, batch_id: str) -> None:
+        """Cancel a running batch request."""
+        client = self._root.get_client()
+        await client.messages.batches.cancel(batch_id)
+        self._root.instance_logger.info(f"Canceled Anthropic batch {batch_id}")
+
+    @override
+    async def get_batch_status(self, batch_id: str) -> str:
+        """Get the current status of a batch."""
+        client = self._root.get_client()
+        batch = await client.messages.batches.retrieve(batch_id)
+        return batch.processing_status
+
+    @classmethod
+    def is_batch_status_completed(cls, batch_status: str) -> bool:
+        """Check if a batch status indicates completion."""
+        return batch_status == "ended"
+
+    @classmethod
+    def is_batch_status_failed(cls, batch_status: str) -> bool:
+        """Check if a batch status indicates failure."""
+        # Anthropic batches can have individual request failures but the batch
+        # itself doesn't have a "failed" status - it just ends
+        return False
+
+    @classmethod
+    def is_batch_status_cancelled(cls, batch_status: str) -> bool:
+        """Check if a batch status indicates cancellation."""
+        return batch_status == "canceling" or batch_status == "canceled"
+
+
+@register_provider("anthropic")
+class AnthropicModel(LLM):
+    provider_config = AnthropicConfig()
+
+    def _get_default_api_key(self) -> str:
+        return model_library_settings.ANTHROPIC_API_KEY
+
+    @override
+    def get_client(
+        self, api_key: str | None = None, base_url: str | None = None
+    ) -> AsyncAnthropic:
+        if not self.has_client():
+            assert api_key
+            headers: dict[str, str] = {}
+            client = create_anthropic_client_with_defaults(
+                base_url=base_url,
+                api_key=api_key,
+                default_headers=headers,
+            )
+            self.assign_client(client)
+        return super().get_client()
+
+    def __init__(
+        self,
+        model_name: str,
+        provider: str = "anthropic",
+        *,
+        config: LLMConfig | None = None,
+    ):
+        super().__init__(model_name, provider, config=config)
+
+        # https://docs.anthropic.com/en/api/openai-sdk
+        if self.native:
+            self.delegate = None
+        else:
+            config = config or LLMConfig()
+            config.custom_endpoint = (
+                config.custom_endpoint or "https://api.anthropic.com/v1/"
+            )
+            config.custom_api_key = config.custom_api_key or SecretStr(
+                model_library_settings.ANTHROPIC_API_KEY
+            )
+
+            # flip native back on for the delegate so it initializes its own
+            # client registry; the outer model stays non-native.
+            config.native = True
+            self.delegate = OpenAIModel(
+                model_name=self.model_name,
+                provider=self.provider,
+                config=config,
+                use_completions=True,
+            )
+            config.native = False
+
+        # Initialize batch support if enabled
+        # Disable batch when using custom_client (similar to OpenAI)
+        self.supports_batch: bool = (
+            self.supports_batch and self.native and not self.custom_endpoint
+        )
+        self.batch: LLMBatchMixin | None = (
+            AnthropicBatchMixin(self) if self.supports_batch else None
+        )
+
+    async def get_tool_call_ids(self, input: Sequence[InputItem]) -> list[str]:
+        raw_responses = [x for x in input if isinstance(x, RawResponse)]
+        tool_call_ids: list[str] = []
+
+        calls = [
+            y
+            for x in raw_responses
+            if isinstance(x.response, ParsedBetaMessage)
+            for y in x.response.content  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(y, BetaToolUseBlock)
+        ]
+        tool_call_ids.extend([x.id for x in calls])
+        return tool_call_ids
+
+    @override
+    async def parse_input(
+        self,
+        input: Sequence[InputItem],
+        **kwargs: Any,
+    ) -> list[dict[str, Any] | Any]:
+        new_input: list[dict[str, Any] | Any] = []
+
+        content_user: list[dict[str, Any]] = []
+
+        def flush_content_user():
+            if content_user:
+                # NOTE: must make new object as we clear()
+                new_input.append({"role": "user", "content": content_user.copy()})
+                content_user.clear()
+
+        tool_call_ids = await self.get_tool_call_ids(input)
+
+        for item in input:
+            if isinstance(item, TextInput):
+                content_user.append({"type": "text", "text": item.text})
+                continue
+
+            if isinstance(item, FileBase):
+                match item.type:
+                    case "image":
+                        parsed = await self.parse_image(item)
+                    case "file":
+                        parsed = await self.parse_file(item)
+                content_user.append(parsed)
+                continue
+
+            # non content user item
+            flush_content_user()
+
+            match item:
+                case ToolResult():
+                    if item.tool_call.id not in tool_call_ids:
+                        raise NoMatchingToolCallError()
+
+                    new_input.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": item.tool_call.id,
+                                    "content": [{"type": "text", "text": item.result}],
+                                }
+                            ],
+                        }
+                    )
+                case RawResponse():
+                    content = cast(ParsedBetaMessage, item.response).content
+                    new_input.append({"role": "assistant", "content": content})
+                case RawInput():
+                    new_input.append(item.input)
+                case SystemInput():
+                    raise UnexpectedSystemInputError()
+
+        # in case content user item is the last item
+        flush_content_user()
+
+        # cache control
+        if new_input:
+            last_msg = new_input[-1]
+            if not isinstance(last_msg, dict):
+                return new_input
+
+            last_msg_dict: dict[str, Any] = cast(dict[str, Any], last_msg)
+            if last_msg_dict.get("role") != "user":
+                return new_input
+
+            content = last_msg_dict.get("content")
+            if not isinstance(content, list) or not content:
+                return new_input
+
+            content_list: list[Any] = cast(list[Any], content)
+            last_block = content_list[-1]
+            if isinstance(last_block, dict):
+                last_block_dict: dict[str, Any] = cast(dict[str, Any], last_block)
+                last_block_dict.setdefault("cache_control", self.cache_control)
+
+        return new_input
+
+    @override
+    async def parse_image(
+        self,
+        image: FileInput,
+    ) -> dict[str, Any]:
+        match image:
+            case FileWithBase64():
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": f"image/{image.mime}",
+                        "data": image.base64,
+                    },
+                }
+            case FileWithUrl():
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": image.url,
+                    },
+                }
+            case FileWithId():
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "file",
+                        "file_id": image.file_id,
+                    },
+                }
+
+    @override
+    async def parse_file(
+        self,
+        file: FileInput,
+    ) -> dict[str, Any]:
+        match file:
+            case FileWithBase64():
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": file.mime,
+                        "data": file.base64,
+                    },
+                }
+            case FileWithUrl():
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "url",
+                        "url": file.url,
+                    },
+                }
+            case FileWithId():
+                return {
+                    "type": "document",
+                    "source": {
+                        "type": "file",
+                        "file_id": file.file_id,
+                    },
+                }
+
+    @override
+    async def parse_tools(
+        self,
+        tools: list[ToolDefinition],
+    ) -> list[dict[str, Any]]:
+        parsed_tools: list[dict[str, Any]] = []
+        for tool in tools:
+            body = tool.body
+            if not isinstance(body, ToolBody):
+                parsed_tools.append(body)
+                continue
+            parsed_tools.append(
+                {
+                    "name": body.name,
+                    "description": body.description,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": body.properties,
+                        "required": body.required,
+                    },
+                }
+            )
+        return parsed_tools
+
+    @override
+    async def upload_file(
+        self,
+        name: str,
+        mime: str,
+        bytes: io.BytesIO,
+        type: Literal["image", "file"] = "file",
+    ) -> FileWithId:
+        file_mime = f"image/{mime}" if type == "image" else mime
+        response = await self.get_client().beta.files.upload(
+            file=(
+                name,
+                bytes,
+                file_mime,
+            ),
+        )
+
+        return FileWithId(
+            type=type,
+            file_id=response.id,
+            name=response.filename,
+            mime=mime,
+        )
+
+    cache_control = {"type": "ephemeral"}  # 5 min cache
+
+    @override
+    async def build_body(
+        self,
+        input: Sequence[InputItem],
+        *,
+        tools: list[ToolDefinition],
+        output_schema: dict[str, Any] | type[BaseModel] | None = None,
+        **kwargs: object,
+    ) -> dict[str, Any]:
+        system_text: str | None = None
+        if isinstance(input[0], SystemInput):
+            system_text = input[0].text
+            input = input[1:]
+
+        body: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": await self.parse_input(input),
+        }
+
+        if system_text is not None:
+            body["system"] = [
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": self.cache_control,
+                }
+            ]
+
+        if not self.max_tokens:
+            raise Exception("Anthropic models require a max_tokens parameter")
+
+        body["max_tokens"] = self.max_tokens
+
+        if self.provider_config.supports_auto_thinking:
+            if self.reasoning:
+                body["thinking"] = {"type": "adaptive"}
+            else:
+                body["thinking"] = {"type": "disabled"}
+        elif self.reasoning:
+            budget_tokens = kwargs.pop(
+                "budget_tokens", get_default_budget_tokens(self.max_tokens)
+            )
+            body["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": budget_tokens,
+            }
+
+        # effort controls compute allocation for text, tool calls, and thinking. Opus-4.5+
+        # use instead of reasoning_effort with auto_thinking
+        if self.provider_config.supports_compute_effort and self.compute_effort:
+            body["output_config"] = {"effort": self.compute_effort}
+
+        # Thinking models don't support temperature: https://docs.claude.com/en/docs/build-with-claude/extended-thinking#feature-compatibility
+        if self.supports_temperature and not self.reasoning:
+            if self.temperature is not None:
+                body["temperature"] = self.temperature
+
+        if output_schema is not None:
+            schema = transform_schema(output_schema)
+            output_config = body.get("output_config", {})
+            output_config["format"] = {
+                "type": "json_schema",
+                "schema": schema,
+            }
+            body["output_config"] = output_config
+
+        parsed_tools = await self.parse_tools(tools)
+        if parsed_tools:
+            if "system" not in body:
+                parsed_tools[-1]["cache_control"] = self.cache_control
+            body["tools"] = parsed_tools
+
+        body.update(kwargs)
+
+        return body
+
+    @override
+    async def _query_impl(
+        self,
+        input: Sequence[InputItem],
+        *,
+        tools: list[ToolDefinition],
+        query_logger: logging.Logger,
+        output_schema: dict[str, Any] | type[BaseModel] | None = None,
+        **kwargs: object,
+    ) -> QueryResult:
+        if self.delegate:
+            return await self.delegate_query(
+                input,
+                tools=tools,
+                query_logger=query_logger,
+                output_schema=output_schema,
+                **kwargs,
+            )
+
+        body = await self.build_body(
+            input, tools=tools, output_schema=output_schema, **kwargs
+        )
+
+        client = self.get_client()
+
+        # only send betas for the official Anthropic endpoint
+        is_anthropic_endpoint = self.custom_endpoint is None
+        if not is_anthropic_endpoint:
+            client_base_url = getattr(client, "_base_url", None) or getattr(
+                client, "base_url", None
+            )
+            if client_base_url:
+                is_anthropic_endpoint = "api.anthropic.com" in str(client_base_url)
+
+        stream_kwargs = {**body}
+        if is_anthropic_endpoint:
+            betas = ["files-api-2025-04-14"]
+            if not self.provider_config.supports_auto_thinking:
+                betas.extend(["interleaved-thinking-2025-05-14"])
+            stream_kwargs["betas"] = betas
+
+        try:
+            async with client.beta.messages.stream(
+                **stream_kwargs,
+            ) as stream:  # pyright: ignore[reportAny]
+                message = await stream.get_final_message()
+            query_logger.debug(f"Anthropic Response finished: {message.id}")
+        except APIConnectionError:
+            raise ImmediateRetryException("Failed to connect to Anthropic")
+
+        text = ""
+        reasoning = ""
+        tool_calls: list[ToolCall] = []
+        for content in message.content:
+            if content.type == "text":
+                text += content.text
+            if content.type == "thinking":
+                reasoning += content.thinking
+            if content.type == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=content.id,
+                        name=content.name,
+                        args=cast(Any, content.input),
+                    )
+                )
+
+        no_useful_content = not text and not reasoning and not tool_calls
+        mapped_finish_reason = map_anthropic_finish_reason(message.stop_reason)
+
+        if no_useful_content:
+            handle_empty_response(mapped_finish_reason, {"raw": str(message)})
+
+        return QueryResult(
+            output_text=text,
+            reasoning=reasoning,
+            finish_reason=mapped_finish_reason,
+            metadata=QueryResultMetadata(
+                # see _calculate_cost
+                in_tokens=message.usage.input_tokens,
+                out_tokens=message.usage.output_tokens,
+                cache_read_tokens=message.usage.cache_read_input_tokens,
+                cache_write_tokens=message.usage.cache_creation_input_tokens,
+            ),
+            tool_calls=tool_calls,
+            history=[*input, RawResponse(response=message)],
+        )
+
+    @override
+    async def get_rate_limit(self) -> RateLimit:
+        response = await self.get_client().messages.with_raw_response.create(
+            max_tokens=1,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Do not think. Say 'ok'",
+                }
+            ],
+            model=self.model_name,
+        )
+        headers = response.headers
+
+        server_time_str = headers.get("date")
+        if server_time_str:
+            server_time = datetime.datetime.strptime(
+                server_time_str, "%a, %d %b %Y %H:%M:%S GMT"
+            ).replace(tzinfo=datetime.timezone.utc)
+            timestamp = server_time.timestamp()
+        else:
+            timestamp = time.time()
+
+        return RateLimit(
+            unix_timestamp=timestamp,
+            raw=headers,
+            request_limit=int(headers.get("anthropic-ratelimit-requests-limit", 0)),
+            request_remaining=int(
+                headers.get("anthropic-ratelimit-requests-remaining", 0)
+            ),
+            token_limit=int(response.headers["anthropic-ratelimit-tokens-limit"]),
+            token_remaining=int(headers.get("anthropic-ratelimit-tokens-remaining", 0)),
+        )
+
+    @override
+    async def count_tokens(
+        self,
+        input: Sequence[InputItem],
+        *,
+        history: Sequence[InputItem] = [],
+        tools: list[ToolDefinition] = [],
+        **kwargs: object,
+    ) -> int:
+        """
+        Count the number of tokens using Anthropic's native token counting API.
+        https://docs.anthropic.com/en/docs/build-with-claude/token-counting
+        """
+        try:
+            input = [*history, *input]
+            if not input:
+                return 0
+
+            body = await self.build_body(
+                input, tools=tools, output_schema=None, **kwargs
+            )
+
+            # Remove fields not supported by count_tokens endpoint
+            body.pop("max_tokens", None)
+            body.pop("temperature", None)
+
+            client = self.get_client()
+            response = await client.messages.count_tokens(**body)
+
+            return response.input_tokens
+        except Exception as e:
+            self.instance_logger.error(f"Error counting tokens: {e}")
+            return await super().count_tokens(
+                input, history=history, tools=tools, **kwargs
+            )
+
+    @override
+    async def _calculate_cost(
+        self,
+        metadata: QueryResultMetadata,
+        batch: bool = False,
+        bill_reasoning: bool = True,
+    ) -> QueryResultCost | None:
+        """
+        Future Cost considerations
+        Per 1000 calls:
+        - Web Search
+        Free:
+        - Web Fetch
+        """
+        # prompt caching manually enabled
+        # assumed that cache tokens are ephemeral_5m_input_tokens
+        return await super()._calculate_cost(metadata, batch, bill_reasoning=False)

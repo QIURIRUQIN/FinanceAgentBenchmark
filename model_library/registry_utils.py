@@ -1,0 +1,257 @@
+from functools import cache
+from pathlib import Path
+from typing import TypedDict
+
+from model_library.base import (
+    LLM,
+    LLMConfig,
+    ProviderConfig,
+    QueryResultCost,
+    QueryResultMetadata,
+)
+from model_library.register_models import (
+    CostProperties,
+    ModelConfig,
+    get_model_registry,
+    get_provider_registry,
+)
+
+ALL_MODELS_PATH = Path(__file__).parent / "config" / "all_models.json"
+
+
+def create_config(
+    registry_config: ModelConfig, override_config: LLMConfig | None
+) -> LLMConfig:
+    """
+    Converts a model registry entry to the necessary LLMConfig.
+    May optionally override the config with a provided override_config,
+    only set fields will be used to override.
+    """
+    config: object = {}
+
+    properties = registry_config.properties
+    supports = registry_config.supports
+    provider_properties = registry_config.provider_properties
+    defaults = registry_config.default_parameters
+
+    if properties:
+        config["max_tokens"] = properties.max_tokens
+        config["reasoning"] = properties.reasoning_model
+
+    if supports:
+        config["supports_images"] = supports.images
+        config["supports_files"] = supports.files
+        config["supports_videos"] = supports.videos
+        config["supports_batch"] = supports.batch
+        config["supports_temperature"] = supports.temperature
+        config["supports_tools"] = supports.tools
+        config["supports_output_schema"] = supports.output_schema
+    else:
+        raise Exception(f"{registry_config.label} has no supports")
+
+    # load provider config with correct type
+    if provider_properties:
+        ModelClass: type[LLM] = get_provider_registry()[registry_config.provider_name]
+        if hasattr(ModelClass, "provider_config"):
+            ProviderConfigClass: type[ProviderConfig] = type(ModelClass.provider_config)  # type: ignore
+            provider_config: ProviderConfig = ProviderConfigClass.model_validate(
+                provider_properties.model_dump(
+                    exclude_unset=True, exclude_defaults=True
+                )
+            )
+            config["provider_config"] = provider_config
+
+    # load defaults
+    config.update(defaults.model_dump(exclude_unset=True))
+
+    loaded_config = LLMConfig(**config)
+
+    # override only with explicitly set fields from override_config
+    if override_config:
+        loaded_config = loaded_config.model_copy(
+            update=override_config.model_dump(exclude_unset=True)
+        )
+        # copy provider_config with correct type (model_dump flattens to dict)
+        if override_config.provider_config:
+            loaded_config.provider_config = override_config.provider_config
+
+    return loaded_config
+
+
+def _get_model_from_registry(
+    registry_config: ModelConfig,
+    override_config: LLMConfig | None,
+) -> LLM:
+    """
+    Utility to return a model class from a registry entry.
+    """
+    model_config: LLMConfig = create_config(registry_config, override_config)
+    model_config.registry_key = registry_config.full_key
+
+    provider_name: str = registry_config.provider_name
+    provider_endpoint: str = registry_config.provider_endpoint
+    ModelClass: type[LLM] = get_provider_registry()[provider_name]
+
+    return ModelClass(
+        model_name=provider_endpoint,
+        provider=registry_config.provider_name,
+        config=model_config,
+    )
+
+
+def get_registry_config(model_str: str) -> ModelConfig | None:
+    config = get_model_registry().get(model_str, None)
+    if config is not None:
+        return config
+
+    if model_str.startswith("openrouter/"):
+        from model_library.openrouter_registry import resolve_openrouter_model
+
+        return resolve_openrouter_model(model_str)
+
+    return None
+
+
+def get_registry_model(
+    model_str: str,
+    override_config: LLMConfig | None = None,
+) -> LLM:
+    """Get a model including default config"""
+    registry_config = get_registry_config(model_str)
+    if not registry_config:
+        raise Exception(f"Model {model_str} not found in registry")
+
+    return _get_model_from_registry(registry_config, override_config)
+
+
+def get_raw_model(
+    model_str: str,
+    config: LLMConfig | None = None,
+) -> LLM:
+    """Get a model exluding default config"""
+    provider, model_name = model_str.split("/", 1)
+    ModelClass = get_provider_registry()[provider]
+    return ModelClass(model_name=model_name, provider=provider, config=config)
+
+
+@cache
+def get_model_cost(model_str: str) -> CostProperties | None:
+    model_config = get_registry_config(model_str)
+    if not model_config:
+        raise Exception(f"Model {model_str} not found in registry")
+    return model_config.costs_per_million_token
+
+
+@cache
+def get_model_input_context_window(model_name: str) -> int:
+    """Return the input context window for the model"""
+    model = get_registry_config(model_name)
+    if not model:
+        raise Exception(f"Model {model_name} not found in registry")
+
+    context_window = model.properties.context_window
+    match model.provider_name:
+        case "openai" | "meta":
+            context_window -= model.properties.max_tokens
+        case _:
+            pass
+    return context_window
+
+
+class TokenDict(TypedDict, total=False):
+    """Token counts for cost calculation."""
+
+    in_tokens: int
+    out_tokens: int
+    reasoning_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+
+
+async def recompute_cost(
+    model_str: str,
+    tokens: TokenDict,
+) -> QueryResultCost:
+    """
+    Recompute the cost for a model based on token information.
+
+    Uses the model provider's existing _calculate_cost method to ensure
+    provider-specific cost calculations are applied.
+
+    Args:
+        model_str: The model identifier (e.g., "openai/gpt-4o")
+        tokens: Dictionary containing token counts with keys:
+            - in_tokens (required): Number of input tokens
+            - out_tokens (required): Number of output tokens
+            - reasoning_tokens (optional): Number of reasoning tokens
+            - cache_read_tokens (optional): Number of cache read tokens
+            - cache_write_tokens (optional): Number of cache write tokens
+
+    Returns:
+        QueryResultCost with computed costs
+
+    Raises:
+        ValueError: If required token parameters are missing
+        Exception: If model not found in registry or costs not configured
+    """
+    if "in_tokens" not in tokens:
+        raise ValueError("Token dict must contain 'in_tokens'")
+    if "out_tokens" not in tokens:
+        raise ValueError("Token dict must contain 'out_tokens'")
+
+    model = get_registry_model(model_str)
+
+    metadata = QueryResultMetadata(
+        in_tokens=tokens["in_tokens"],
+        out_tokens=tokens["out_tokens"],
+        reasoning_tokens=tokens.get("reasoning_tokens"),
+        cache_read_tokens=tokens.get("cache_read_tokens"),
+        cache_write_tokens=tokens.get("cache_write_tokens"),
+    )
+
+    cost = await model._calculate_cost(metadata)  # type: ignore[arg-type]
+    if cost is None:
+        raise Exception(f"No cost information available for model {model_str}")
+
+    return cost
+
+
+@cache
+def get_provider_names() -> list[str]:
+    """Return all provider names in the registry"""
+    return sorted([provider_name for provider_name in get_provider_registry().keys()])
+
+
+@cache
+def get_model_names(
+    provider: str | None = None,
+    include_deprecated: bool = False,
+    include_alt_keys: bool = True,
+) -> list[str]:
+    """
+    Return model names in the registry
+    - provider: Filter by provider name
+    - include_deprecated: Include deprecated models
+    - include_alt_keys: Include alternative keys from the same provider
+    """
+    registry = get_model_registry()
+    alternative_keys_set: set[str] = set()
+
+    if not include_alt_keys:
+        for model in registry.values():
+            for alt_item in model.alternative_keys:
+                alt_key = (
+                    alt_item if isinstance(alt_item, str) else list(alt_item.keys())[0]
+                )
+                if alt_key.split("/")[0] == model.provider_name:
+                    alternative_keys_set.add(alt_key)
+
+    return sorted(
+        [
+            model.full_key
+            for model in get_model_registry().values()
+            if (not provider or model.provider_name.lower() == provider.lower())
+            and (not model.metadata.deprecated or include_deprecated)
+            and model.full_key not in alternative_keys_set
+        ]
+    )

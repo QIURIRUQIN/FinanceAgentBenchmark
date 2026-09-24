@@ -1,0 +1,200 @@
+base-config:
+  company: Google
+  documentation_url: https://ai.google.dev/gemini-api/docs/models
+  open_source: false
+  supports:
+    images: false
+    videos: false
+    files: false
+    batch: false
+    temperature: false
+    tools: false
+    output_schema: false
+  properties:
+    reasoning_model: false
+  costs_per_million_token:
+    batch:
+      input_discount: 0.5
+      output_discount: 0.5
+
+gemini-3-models:
+  base-config:
+    supports:
+      images: true
+      files: true
+      videos: true
+      tools: true
+      batch: true
+      temperature: true
+      output_schema: true
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 1
+      reasoning_effort: "high"
+
+  google/gemini-3.1-pro-preview:
+    label: Gemini 3.1 Pro Preview (02/26)
+    release_date: 2026-02-19
+    properties:
+      context_window: 1048576
+      max_tokens: 65536
+      training_cutoff: "2025-01"
+      reasoning_model: true
+    costs_per_million_token:
+      input: 2.0
+      output: 12.0
+      cache:
+        read: 0.20
+      context:
+        threshold: 200_000
+        input: 4.0
+        output: 18.0
+        cache:
+          read: 0.40
+    metadata:
+      available_as_evaluator: true
+
+  google/gemini-3.1-flash-lite-preview:
+    label: Gemini 3.1 Flash Lite Preview
+    release_date: 2026-03-03
+    properties:
+      context_window: 1048576
+      max_tokens: 65536
+      reasoning_model: true
+    costs_per_million_token: # guessing based on 2.5 flash lite
+      input: 0.25
+      output: 1.50
+
+  google/gemini-3-flash-preview:
+    label: Gemini 3 Flash (12/25)
+    release_date: 2025-12-17
+    properties:
+      context_window: 1048576
+      max_tokens: 65536
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.50
+      output: 3.00
+
+  google/gemini-3-pro-preview:
+    label: Gemini 3 Pro (11/25)
+    release_date: 2025-11-18
+    properties:
+      context_window: 1048576
+      max_tokens: 65536
+      training_cutoff: "2025-01"
+      reasoning_model: true
+    costs_per_million_token:
+      input: 2.0
+      output: 12.0
+      cache:
+        read: 0.20
+      context:
+        threshold: 200_000
+        input: 4.0
+        output: 18.0
+        cache:
+          read: 0.40
+
+gemma-4-models:
+  base-config:
+    open_source: true
+    supports:
+      images: true
+      videos: true
+      files: true
+      temperature: true
+      tools: true
+      output_schema: true
+    costs_per_million_token:
+      cache:
+        read: 0.0
+        write: 0.0
+    default_parameters:
+      temperature: 1
+      reasoning_effort: "high"
+
+  google/gemma-4-31b-it:
+    label: Gemma 4 31B IT
+    release_date: 2026-04-02
+    properties:
+      context_window: 262_144
+      max_tokens: 32_768
+      training_cutoff: "2025-01"
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.00
+      output: 0.00
+
+gemini-2.5-models:
+  base-config:
+    supports:
+      images: true
+      files: true
+      videos: true
+      tools: true
+      batch: true
+      temperature: true
+      output_schema: true
+    properties:
+      context_window: 1_048_576
+      training_cutoff: "2024-05"
+    costs_per_million_token:
+      cache:
+        read_discount: 0.1
+    default_parameters:
+      temperature: 1
+
+  google/gemini-2.5-pro:
+    label: Gemini 2.5 Pro
+    release_date: 2025-07-17
+    metadata:
+      available_as_evaluator: true
+    properties:
+      max_tokens: 65_536
+      reasoning_model: true
+    costs_per_million_token:
+      input: 1.25
+      output: 10.0
+      cache:
+        read: 0.125
+      context:
+        threshold: 200_000
+        input: 2.5
+        output: 15.0
+        cache:
+          read: 0.25
+
+  google/gemini-2.5-flash:
+    label: Gemini 2.5 Flash (7/17) (Nonthinking)
+    release_date: 2025-07-17
+    metadata:
+      available_as_evaluator: true
+    properties:
+      max_tokens: 65_536
+    costs_per_million_token:
+      input: 0.30
+      output: 2.50
+      cache:
+        read: 0.03
+    alternative_keys:
+      - google/gemini-2.5-flash-thinking:
+          properties:
+            reasoning_model: true
+
+  google/gemini-2.5-flash-lite:
+    label: Gemini 2.5 Flash Lite (Nonthinking)
+    release_date: 2025-07-22
+    properties:
+      max_tokens: 65_535
+    costs_per_million_token:
+      input: 0.10
+      output: 0.40
+      cache:
+        read: 0.01
+    alternative_keys:
+      - google/gemini-2.5-flash-lite-thinking:
+          properties:
+            reasoning_model: true

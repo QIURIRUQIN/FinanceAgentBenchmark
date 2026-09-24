@@ -1,0 +1,173 @@
+base-config:
+  company: Amazon
+  open_source: false
+  supports:
+    images: false
+    files: false
+    tools: true
+    temperature: true
+  properties:
+    reasoning_model: false
+
+nova-models:
+  base-config:
+    documentation_url: https://www.aboutamazon.com/news/aws/amazon-nova-artificial-intelligence-bedrock-aws
+
+  amazon/amazon.nova-pro-v1:0:
+    label: Nova Pro
+    release_date: 2024-12-03
+    documentation_url: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html
+    supports:
+      images: true
+      videos: true
+      files: true
+    properties:
+      context_window: 300_000
+      max_tokens: 10_000
+      training_cutoff: null
+    costs_per_million_token:
+      input: 0.8
+      output: 3.2
+      cache:
+        read: 0.2
+
+  amazon/amazon.nova-lite-v1:0:
+    label: Nova Lite
+    release_date: 2024-12-03
+    documentation_url: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html
+    supports:
+      images: true
+      videos: true
+      files: true
+    properties:
+      context_window: 300_000
+      max_tokens: 0
+      training_cutoff: null
+    costs_per_million_token:
+      input: 0.06
+      output: 0.24
+      cache:
+        read: 0.015
+
+  amazon/amazon.nova-micro-v1:0:
+    label: Nova Micro
+    release_date: 2024-12-03
+    documentation_url: https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html
+    properties:
+      context_window: 128_000
+      max_tokens: 0
+      training_cutoff: null
+    costs_per_million_token:
+      input: 0.035
+      output: 0.14
+      cache:
+        read: 0.00875
+
+claude-models:
+  base-config:
+    documentation_url: https://docs.anthropic.com/en/docs/models/claude-3-5-sonnet
+    default_parameters:
+      temperature: 1
+
+  bedrock/claude-sonnet-4-20250514-v1:
+    label: Claude Sonnet 4 (Nonthinking)
+    release_date: 2025-05-22
+    documentation_url: https://www.anthropic.com/claude/sonnet
+    properties:
+      context_window: 200_000
+      max_tokens: 64_000
+      training_cutoff: 2025-03
+    metadata:
+      available_as_evaluator: true
+    costs_per_million_token:
+      input: 3.0
+      output: 15.0
+      cache:
+        read: 0.3
+        write: 3.75
+      context:
+        threshold: 200_000
+        input: 6.00
+        output: 22.5
+        cache:
+          read: 0.6
+          write: 7.50
+    provider_endpoint: us.anthropic.claude-sonnet-4-20250514-v1:0
+    alternative_keys:
+      - bedrock/claude-sonnet-4-20250514-v1-thinking:
+          properties:
+            reasoning_model: true
+
+  bedrock/claude-opus-4-20250514-v1:
+    label: Claude Opus 4 (Nonthinking)
+    release_date: 2025-05-22
+    properties:
+      context_window: 200_000
+      max_tokens: 32_000
+      training_cutoff: 2025-03
+    metadata:
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 15.0
+      output: 75.0
+      cache:
+        read: 1.5
+        write: 18.75
+    provider_endpoint: us.anthropic.claude-opus-4-20250514-v1:0
+    alternative_keys:
+      - bedrock/claude-opus-4-20250514-v1-thinking:
+          properties:
+            reasoning_model: true
+
+  bedrock/claude-opus-4-1-20250805-v1:
+    label: Claude Opus 4.1 (Nonthinking)
+    release_date: 2025-08-05
+    properties:
+      context_window: 200_000
+      max_tokens: 32_000
+      training_cutoff: 2025-03
+    metadata:
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 15.0
+      output: 75.0
+    provider_endpoint: us.anthropic.claude-opus-4-1-20250805-v1:0
+    alternative_keys:
+      - bedrock/claude-opus-4-1-20250805-v1-thinking:
+          properties:
+            reasoning_model: true
+
+  bedrock/claude-3-5-haiku-20241022-v1:
+    label: Claude 3.5 Haiku (Bedrock)
+    release_date: 2024-10-22
+    properties:
+      context_window: 200_000
+      max_tokens: 0
+      training_cutoff: null
+    metadata:
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 0.8
+      output: 4
+      cache:
+        read: 0.08
+        write: 1
+    provider_endpoint: us.anthropic.claude-3-5-haiku-20241022-v1:0
+
+llama-models:
+  base-config:
+    documentation_url: https://aws.amazon.com/bedrock/meta/
+  bedrock/llama3-3-70b-instruct-v1:
+    label: Llama 3.3 70B Instruct (Bedrock)
+    release_date: 2024-12-18
+    properties:
+      context_window: 128_000
+      max_tokens: 0
+      training_cutoff: null
+    metadata:
+      available_as_evaluator: true
+      available_for_everyone: false
+    costs_per_million_token:
+      input: 0.72
+      output: 0.72
+    provider_endpoint: us.meta.llama3-3-70b-instruct-v1:0

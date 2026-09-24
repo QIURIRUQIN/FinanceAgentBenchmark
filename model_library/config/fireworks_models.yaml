@@ -1,0 +1,96 @@
+base-config:
+  company: Fireworks
+  documentation_url: https://fireworks.ai/models
+  open_source: false
+  supports:
+    files: false
+    tools: true
+  properties:
+    reasoning_model: false
+  costs_per_million_token:
+    cache:
+      read_discount: 1
+    batch:
+      input_discount: 0.5
+      output_discount: 0.5
+
+deepseek-models:
+  base-config:
+    company: DeepSeek
+    open_source: true
+    supports:
+      images: false
+      temperature: true
+    default_parameters:
+      temperature: 1
+
+  fireworks/deepseek-v3p1:
+    label: DeepSeek V3.1
+    release_date: 2025-08-21
+    properties:
+      context_window: 163_840
+      max_tokens: 163_840
+    costs_per_million_token:
+      input: 0.56
+      output: 1.68
+
+  fireworks/deepseek-v3p2:
+    label: DeepSeek V3.2 (Nonthinking)
+    release_date: 2025-12-01
+    properties:
+      context_window: 160_000
+      max_tokens: 20_480
+    default_parameters:
+      reasoning_effort: "none"
+    costs_per_million_token:
+      input: 0.56
+      output: 1.68
+      cache:
+        read: 0.28
+    alternative_keys:
+      - fireworks/deepseek-v3p2-thinking:
+          label: DeepSeek V3.2 (Thinking)
+          properties:
+            reasoning_model: true
+          default_parameters:
+            reasoning_effort: "high"
+
+openai-models:
+  base-config:
+    company: OpenAI
+    open_source: true
+    supports:
+      images: false
+
+  fireworks/gpt-oss-120b:
+    label: GPT OSS 120B
+    release_date: 2025-08-05
+    properties:
+      context_window: 128_000
+      max_tokens: 32_768
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.15
+      output: 0.60
+
+  fireworks/gpt-oss-20b:
+    label: GPT OSS 20B
+    release_date: 2025-08-05
+    properties:
+      context_window: 128_000
+      max_tokens: 32_768
+      training_cutoff: null
+      reasoning_model: true
+    costs_per_million_token:
+      input: 0.07
+      output: 0.3
+
+kimi-models:
+  base-config:
+    company: Kimi
+    open_source: true
+    documentation_url: https://www.kimi.com/
+    supports:
+      images: false
+
