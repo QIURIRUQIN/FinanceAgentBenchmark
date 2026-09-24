@@ -1,0 +1,10 @@
+q001	what statements has INTU made regarding its new IES solution?
+q006	What has driven the slowdown in Intel's revenues over the past two years?
+q013	What were INTU's comments on payments and payroll growth last quarter?
+q015	How do TGT's likely investments, as discussed on their most recent earnings call, compare to the focus they outlined last earnings season?
+q016	For Shopify's most recently reported quarter, how do its revenue and earnings per share compare to Street consensus estimates for that quarter?
+q025	Which MedTech companies stand to gain from the new US presidential regime in 2025, especially regarding tariffs and manufacturing flexibility, and which are expected to be negatively impacted?
+q026	From LULU's earnings call Q&A sessions across the past 4 quarters, what are the major investment debate themes, and for each theme, what is the key takeaway and whether the sentiment is positive or negative? Present the results in a table with each quarter as a column and each investment debate theme as a row.
+q035	identify public regulated utilities whose capex forecast has been updated in the last three months
+q036	What AI initiatives does HPQ currently have in place that are benefiting their business today, and has HPQ seen increases in sales, revenue, or margins attributable to AI? Include quantitative justification where available. Limit sources to documents from the last 7 days, and exclude information about other companies or sources not affiliated with HPQ.
+q045	How do the unit economics of Spotify's audiobook business break down?

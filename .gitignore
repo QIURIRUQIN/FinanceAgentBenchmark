@@ -1,0 +1,15 @@
+/.venv/
+/.ruff_cache/
+__pycache__/
+*.py[cod]
+/data/grading/
+/logs/
+/tests/
+/trash/
+
+# Local credentials and macOS metadata
+.env
+.env.*
+!.env.example
+!.env.sample
+.DS_Store
